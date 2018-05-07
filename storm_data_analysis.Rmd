@@ -1,0 +1,175 @@
+---
+title: "Storm Data Analysis"
+author: "Bert Lievrouw"
+date: "5/6/2018"
+output: html_document
+---
+
+## Synopsis
+This study analyses the effect of weather conditions on population health and the economy in the US based on data gathered from 1950 until november 2011 by the National Weather Service. Additional information about the underlying data can be obtained. [here](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) and [here](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+
+## Data processing
+
+```{r setup, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Don't use scientific notation
+options(scipen = 999)
+
+# Load required packages
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+```
+
+The analysis required the R packages `dplyr`, `ggplot2` and `reshape2`.
+
+```{r}
+zipfile_url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+zipfile_path <- "data/noaa_storm_data.csv.bz2"
+```
+
+Data for this analysis was downloaded as a bz2 zipped file from the [web](`r zipfile_url`). The compressed raw csv file with headers was read into an R dataframe. Empty strings were interpreted as NA values.
+
+```{r download_and_read_data, include=TRUE, cache=TRUE}
+# Download bz2 zipped file to data directory and read it
+if (!dir.exists("data")) {
+    dir.create("data")
+}
+if (!file.exists(zipfile_path)) {
+    download.file(zipfile_url, zipfile_path)
+}
+if (!exists("storm_df")) {
+    storm_df <- read.csv(zipfile_path, header=TRUE, na.strings = "")
+}
+```
+
+
+Data was grouped by weather event (`EVTYPE`) in order to analyse the health and economic effects of these events.
+
+```{r}
+storm_data_by_event <- storm_df %>% group_by(EVTYPE)
+```
+
+
+The impact on population health by weather event type was estimated using the sum of all reported fatality (`FATALITIES`) and injury (`INJURIES`) numbers for these events. A plot was created which reports these totals for the most lethal (i.e. highest fatality totals) weather events.
+
+```{r population_health_analysis}
+# Rank total fatalities by event type
+fatalities_by_event <- storm_data_by_event %>%
+    summarize(total_fatalities=sum(FATALITIES)) %>%
+    # Rank events by total fatalities
+    arrange(desc(total_fatalities)) %>%
+    as.data.frame
+
+# Top 20 total fatalities during recorded period by weather event
+head(fatalities_by_event, 20)
+
+# Rank total injuries by event type
+injuries_by_event <- storm_data_by_event %>%
+    summarize(total_injuries=sum(INJURIES)) %>%
+    # Rank events by total injuries
+    arrange(desc(total_injuries)) %>%
+    as.data.frame
+
+# Top 20 total injuries during recorded period by weather event:
+head(injuries_by_event, 20)
+
+# Merge fatality and injury data, primarily sort by fatalities
+population_hazards_by_event <- merge(fatalities_by_event, injuries_by_event, by="EVTYPE") %>%
+    arrange(desc(total_fatalities), desc(total_injuries))
+
+# Create barplot displaying health effects of 15 most lethal weather events
+population_hazards_by_event_head_melt <- melt(population_hazards_by_event[1:15,], id="EVTYPE")
+most_fatal_events_ranked <- unique(population_hazards_by_event_head_melt$EVTYPE)
+most_lethal_weather_events_plot <- ggplot(population_hazards_by_event_head_melt, 
+    aes(x=factor(EVTYPE, levels=most_fatal_events_ranked), y=value, fill=variable)) + 
+    geom_bar(stat="identity", position="dodge") + 
+    labs(title="Most lethal weather events in US (1950 - 2011)", x="Weather event", y="Population") + 
+    scale_fill_discrete(name="Health effect", 
+                        breaks=c("total_fatalities", "total_injuries"), 
+                        labels=c("Total fatalities", "Total injuries")) + 
+    scale_y_log10() + 
+    theme(axis.text.x = element_text(angle = 65, hjust = 1))
+```
+
+
+The economic damages by weather event type were estimated using the sum of all reported property damages (`PROPDMG`) and damages to crops (`CROPDMG`).
+
+```{r economic_consequences_analysis}
+# Rank total property damages by weather event type
+property_damage_by_event <- storm_data_by_event %>%
+    summarize(total_property_damage = sum(PROPDMG)) %>%
+    arrange(desc(total_property_damage)) %>%
+    as.data.frame
+
+# Ranking of weather events with highest total property damages ($) during recorded period
+head(property_damage_by_event, 20)
+
+# Rank total crop damages by weather event type
+crop_damage_by_event <- storm_data_by_event %>%
+    summarize(total_crop_damage = sum(CROPDMG)) %>%
+    arrange(desc(total_crop_damage)) %>%
+    as.data.frame
+
+# Ranking of weather events with highest total crop damages ($) during recorded period:
+head(crop_damage_by_event, 20)
+
+# Merge total property and crop damages and calculate total economic damages by weather event
+economic_damage_by_event <- merge(property_damage_by_event, crop_damage_by_event, by="EVTYPE") %>%
+    mutate(total_economic_damage = total_property_damage + total_crop_damage) %>%
+    arrange(desc(total_economic_damage)) %>%
+    as.data.frame
+
+# Weather events with highest total economic damages ($) (property and crop damage)
+head(economic_damage_by_event[, c("EVTYPE", "total_economic_damage")], 20)
+
+# Create barplot displaying total economic damage of weather events with highest economic impact
+highest_economic_damages_by_weather_events_plot <- ggplot(economic_damage_by_event[1:15,], 
+    aes(x=factor(EVTYPE, levels=economic_damage_by_event[1:15,]$EVTYPE), y=total_economic_damage/(10^6))) + 
+    geom_bar(stat="identity") + 
+    labs(title="Weather events with most economic damages in US (1950 - 2011)", x="Weather event", y="Damages ($M)") + 
+    theme(axis.text.x = element_text(angle = 65, hjust = 1))
+
+# Create barplot displaying total economic damage of weather events with highest economic impact as fraction of overall weather related damages
+total_economic_damage_overall <- sum(economic_damage_by_event$total_economic_damage)
+highest_economic_damages_fraction_by_weather_events_plot <- ggplot(economic_damage_by_event[1:30,], 
+    aes(x=factor(EVTYPE, levels=economic_damage_by_event[1:30,]$EVTYPE), y=(total_economic_damage/total_economic_damage_overall)*100)) + 
+    geom_bar(stat="identity") + 
+    labs(title="Weather events with most economic damages in US (1950 - 2011)", x="Weather event", y="Damages (%)") + 
+    theme(axis.text.x = element_text(angle = 65, hjust = 1))
+```
+
+
+## Results
+
+### Population health
+
+- Total **fatalities and injuries** of the most lethal weather events:
+```{r}
+most_lethal_weather_events_plot
+```
+
+Tornadoes seem to have been by far the most harmful for the health of the US population from 1950 until november 2011.
+
+
+
+### Economic consequences
+
+- Ranking of weather events with highest **total economic damages** (property + crop damage) during recorded period:
+```{r}
+highest_economic_damages_by_weather_events_plot
+highest_economic_damages_fraction_by_weather_events_plot
+```
+
+More then a quarter of all weather related economic damages in the US from 1950 until november 2011 are attributable to tornadoes.
+
+```{r}
+head(crop_damage_by_event, 3)
+```
+
+Hail is the biggest contributor to crop related economic damages
+
+
+
